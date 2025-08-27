@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wave Trainer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<style>
+body {
+    margin: 0;
+    background: #000; /* Match image background */
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Press Start 2P', cursive;
+}
+canvas { background: #000; display: block; } /* Match image background */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const slopePoints = [];
+const segmentWidth = 80;
+
+// --- Game state variables ---
+let gameStarted = false;
+let gameOver = false;
+let score = 0;
+let currentScrollSpeed;
+let nextSpeedMilestone;
+
+// --- Difficulty variables
+const difficultyLevels = [
+    // baseTunnelHeight: initial tunnel height
+    // minTunnelHeight, maxTunnelHeight: range for dynamic tunnel width
+    // baseSpeed: initial scroll speed
+    // speedIncreaseInterval: score points after which speed increases
+    // speedIncreaseAmount: how much speed increases at each interval
+    { name: "Easy", baseTunnelHeight: 160, minTunnelHeight: 160, maxTunnelHeight: 180, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.225 },
+    { name: "Medium", baseTunnelHeight: 120, minTunnelHeight: 120, maxTunnelHeight: 140, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.315 },
+    { name: "Hard", baseTunnelHeight: 100, minTunnelHeight: 80, maxTunnelHeight: 100, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.405 },
+    { name: "Hard+", baseTunnelHeight: 80, minTunnelHeight: 60, maxTunnelHeight: 80, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.495 },
+    { name: "Diddy", baseTunnelHeight: 60, minTunnelHeight: 40, maxTunnelHeight: 60, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.585 }
+];
+let currentDifficultyIndex = 0;
+
+// --- Tunnel Height Dynamics ---
+let currentTunnelHeight; // The actual height of the tunnel at the arrow's X position
+let targetTunnelHeight;  // The height the tunnel is currently aiming for
+let tunnelHeightChangeCounter = 0; // Counter to trigger targetTunnelHeight changes
+const TUNNEL_HEIGHT_CHANGE_INTERVAL = 10; // Change target height every N segments
+
+let lastSlopeDirection = 1; // Reset for new game
+
+const arrow = {
+    x: 0,
+    y: 0,
+    size: 37,
+    angle: 0,
+    color: "#FFFFFF" // Trail color
+};
+
+// --- Arrow Sprite Loading ---
+const arrowSprite = new Image();
+arrowSprite.src = 'https://github.com/crobperson/Overpriced-Haircut/blob/main/efe4162f4a8fa7e275a42d2d553524503e0382f2_hq.png?raw=true';
+let arrowSpriteLoaded = false;
+arrowSprite.onload = () => {
+    arrowSpriteLoaded = true;
+    console.log("Arrow sprite loaded.");
+};
+arrowSprite.onerror = () => {
+    console.error("Failed to load arrow sprite.");
+};
+
+// --- Trail variables ---
+const trailPoints = [];
+const MAX_TRAIL_LENGTH = 100;
+
+// --- Leaderboard variables ---
+const MAX_LEADERBOARD_ENTRIES = 5;
+let leaderboard = [];
+
+// --- Visual Effects Variables ---
+let screenShake = { x: 0, y: 0, duration: 0, intensity: 0 };
+let flashEffect = { alpha: 0, duration: 0 };
+
+// --- Background Layers ---
+const backgroundLayers = [];
+const bgImages = [
+    'https://raw.githubusercontent.com/crobperson/Overpriced-Haircut/main/bg1.png', // Example image 1
+    'https://raw.githubusercontent.com/crobperson/Overpriced-Haircut/main/bg2.png', // Example image 2
+    'https://raw.githubusercontent.com/crobperson/Overpriced-Haircut/main/bg3.png'  // Example image 3
+];
+const bgSpeeds = [0.1, 0.3, 0.6]; // Parallax speeds for each layer
+
+function loadBackgrounds() {
+    let loadedCount = 0;
+    bgImages.forEach((src, index) => {
+        const img = new Image();
+        img.src = src;
+        img.onload = () => {
+            backgroundLayers.push({
+                image: img,
+                x: 0,
+                speedFactor: bgSpeeds[index]
+            });
+            loadedCount++;
+            if (loadedCount === bgImages.length) {
+                // Sort layers by speedFactor to ensure correct drawing order (slower first)
+                backgroundLayers.sort((a, b) => a.speedFactor - b.speedFactor);
+                console.log("Background layers loaded.");
+            }
+        };
+        img.onerror = () => {
+            console.error(`Failed to load background image: ${src}`);
+        };
+    });
+}
+
+// --- Fit canvas and initialize arrow position ---
+function fit() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    arrow.x = canvas.width * 0.25;
+}
+window.addEventListener('resize', fit);
+
+// --- Function to reset all game state ---
+function resetGame() {
+    const currentDifficulty = difficultyLevels[currentDifficultyIndex];
+
+    currentTunnelHeight = currentDifficulty.baseTunnelHeight;
+    targetTunnelHeight = currentDifficulty.baseTunnelHeight;
+    tunnelHeightChangeCounter = 0;
+
+    currentScrollSpeed = currentDifficulty.baseSpeed;
+    nextSpeedMilestone = currentDifficulty.speedIncreaseInterval;
+
+    arrow.y = canvas.height / 2;
+    gameOver = false;
+    upPressed = false;
+    arrow.angle = Math.PI / 4;
+    score = 0;
+
+    slopePoints.length = 0;
+    trailPoints.length = 0;
+    lastSlopeDirection = 1;
+
+    screenShake = { x: 0, y: 0, duration: 0, intensity: 0 };
+    flashEffect = { alpha: 0, duration: 0 };
+
+    // Pre-fill slopes for a smooth start
+    for (let i = 0; i < Math.ceil(canvas.width / segmentWidth) + 2; i++) {
+        generateNewSlopeSegment();
+    }
+}
+
+// Initial setup: Call fit to set canvas size and arrow X, but don't start the game.
+fit();
+loadBackgrounds(); // Load background images
+
+let upPressed = false;
+document.addEventListener('keydown', e => {
+    if (e.code === 'KeyD') {
+        if (!gameStarted || gameOver) {
+            currentDifficultyIndex = (currentDifficultyIndex + 1) % difficultyLevels.length;
+            // Update tunnel height for display on start/game over screens
+            currentTunnelHeight = difficultyLevels[currentDifficultyIndex].baseTunnelHeight;
+        }
+    }
+    if (e.code === 'KeyH') {
+        if (!gameStarted || gameOver) {
+            gameStarted = true;
+            resetGame();
+        }
+    }
+    if (e.code === 'ArrowUp' || e.code === 'Space') {
+        upPressed = true;
+    }
+});
+document.addEventListener('keyup', e => {
+    if (e.code === 'ArrowUp' || e.code === 'Space') {
+        upPressed = false;
+    }
+});
+document.body.addEventListener('mousedown', () => upPressed = true);
+document.body.addEventListener('mouseup', () => upPressed = false);
+document.body.addEventListener('touchstart', (e) => { e.preventDefault(); upPressed = true; });
+document.body.addEventListener('touchend', (e) => { e.preventDefault(); upPressed = false; });
+
+// --- Draw Arrow (uses sprite) ---
+function drawArrow(cx, cy, angle) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle + Math.PI / 2); // Adjust for sprite pointing up
+
+    const spriteWidth = arrow.size;
+    const spriteHeight = arrow.size;
+
+    if (arrowSpriteLoaded) {
+        ctx.drawImage(arrowSprite, -spriteWidth / 2, -spriteHeight / 2, spriteWidth, spriteHeight);
+    } else {
+        // Fallback to drawing the old polygon if sprite not loaded
+        const s = arrow.size / 2;
+        ctx.beginPath();
+        ctx.moveTo(s, 0);
+        ctx.lineTo(-s, -s);
+        ctx.lineTo(-s / 2, 0);
+        ctx.lineTo(-s, s);
+        ctx.closePath();
+        ctx.fillStyle = arrow.color;
+        ctx.fill();
+    }
+    ctx.restore();
+}
+
+// --- Generate New Slope Segment (with dynamic height) ---
+function generateNewSlopeSegment() {
+    const currentDifficulty = difficultyLevels[currentDifficultyIndex];
+    let lastX = canvas.width;
+    let lastCenterY = canvas.height / 2; // Default for first segment
+    let lastHeight = currentDifficulty.baseTunnelHeight;
+
+    if (slopePoints.length > 0) {
+        const lastPoint = slopePoints[slopePoints.length - 1];
+        lastX = lastPoint.x;
+        lastCenterY = lastPoint.centerLineY;
+        lastHeight = lastPoint.height;
+    } else {
+        // If no points, this is the very first segment.
+        lastX = canvas.width; // Start just off-screen to the right
+    }
+
+    // Smoothly transition currentTunnelHeight towards targetTunnelHeight
+    currentTunnelHeight += (targetTunnelHeight - currentTunnelHeight) * 0.05; // Interpolation factor
+
+    // Randomly change targetTunnelHeight
+    tunnelHeightChangeCounter++;
+    if (tunnelHeightChangeCounter >= TUNNEL_HEIGHT_CHANGE_INTERVAL) {
+        targetTunnelHeight = currentDifficulty.minTunnelHeight + Math.random() * (currentDifficulty.maxTunnelHeight - currentDifficulty.minTunnelHeight);
+        tunnelHeightChangeCounter = 0;
+    }
+
+    // Calculate new center line Y
+    let newCenterY = lastCenterY + (lastSlopeDirection * segmentWidth);
+
+    // Ensure slopes don't go too close to the edge, considering the current tunnel height
+    const minAllowedCenterY = currentTunnelHeight / 2 + 40;
+    const maxAllowedCenterY = canvas.height - currentTunnelHeight / 2 - 40;
+
+    if (newCenterY < minAllowedCenterY || newCenterY > maxAllowedCenterY) {
+        lastSlopeDirection *= -1; // Reverse direction
+        newCenterY = lastCenterY + (lastSlopeDirection * segmentWidth); // Recalculate
+        // If still out of bounds, clamp it
+        newCenterY = Math.max(minAllowedCenterY, Math.min(maxAllowedCenterY, newCenterY));
+    } else if (Math.random() < 0.4) { // Chance to change direction
+        lastSlopeDirection *= -1;
+    }
+
+    slopePoints.push({
+        x: lastX + segmentWidth,
+        centerLineY: newCenterY,
+        height: currentTunnelHeight // Use the dynamically adjusted height
+    });
+}
+
+// --- Draw Slopes (with gradient and dynamic height) ---
+function drawSlopes() {
+    if (slopePoints.length < 2) return;
+
+    // Create a gradient for the tunnel walls
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    gradient.addColorStop(0, '#444');
+    gradient.addColorStop(0.5, '#888');
+    gradient.addColorStop(1, '#444');
+
+    // Draw top wall
+    ctx.beginPath();
+    ctx.moveTo(slopePoints[0].x, slopePoints[0].centerLineY - slopePoints[0].height / 2);
+    for (let i = 1; i < slopePoints.length; i++) {
+        ctx.lineTo(slopePoints[i].x, slopePoints[i].centerLineY - slopePoints[i].height / 2);
+    }
+    ctx.lineTo(slopePoints[slopePoints.length - 1].x, 0); // Connect to top of canvas
+    ctx.lineTo(slopePoints[0].x, 0); // Connect back to start of canvas
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Draw bottom wall
+    ctx.beginPath();
+    ctx.moveTo(slopePoints[0].x, slopePoints[0].centerLineY + slopePoints[0].height / 2);
+    for (let i = 1; i < slopePoints.length; i++) {
+        ctx.lineTo(slopePoints[i].x, slopePoints[i].centerLineY + slopePoints[i].height / 2);
+    }
+    ctx.lineTo(slopePoints[slopePoints.length - 1].x, canvas.height); // Connect to bottom of canvas
+    ctx.lineTo(slopePoints[0].x, canvas.height); // Connect back to start of canvas
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Draw inner lines (optional, for detail)
+    ctx.strokeStyle = '#FFF';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(slopePoints[0].x, slopePoints[0].centerLineY - slopePoints[0].height / 2);
+    for (let i = 1; i < slopePoints.length; i++) {
+        ctx.lineTo(slopePoints[i].x, slopePoints[i].centerLineY - slopePoints[i].height / 2);
+    }
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(slopePoints[0].x, slopePoints[0].centerLineY + slopePoints[0].height / 2);
+    for (let i = 1; i < slopePoints.length; i++) {
+        ctx.lineTo(slopePoints[i].x, slopePoints[i].centerLineY + slopePoints[i].height / 2);
+    }
+    ctx.stroke();
+}
+
+// --- Draw Trail ---
+function drawTrail() {
+    if (trailPoints.length > 1) {
+        ctx.beginPath();
+        let startIndex = 0;
+        while (startIndex < trailPoints.length - 1 && trailPoints[startIndex].x < -10) {
+            startIndex++;
+        }
+        if (startIndex < trailPoints.length) {
+            ctx.moveTo(trailPoints[startIndex].x, trailPoints[startIndex].y);
+            for (let i = startIndex + 1; i < trailPoints.length; i++) {
+                ctx.lineTo(trailPoints[i].x, trailPoints[i].y);
+            }
+            ctx.strokeStyle = arrow.color;
+            ctx.lineWidth = 14;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+    }
+}
+
+// --- Update and Draw Slopes ---
+function updateAndDrawSlopes() {
+    if (!gameOver) {
+        for (const point of slopePoints) {
+            point.x -= currentScrollSpeed;
+        }
+    }
+
+    while (slopePoints.length > 1 && slopePoints[1].x < -segmentWidth) {
+        slopePoints.shift();
+    }
+
+    if (!gameOver) {
+        const lastPoint = slopePoints[slopePoints.length - 1];
+        if (!lastPoint || lastPoint.x < canvas.width + segmentWidth) {
+            generateNewSlopeSegment();
+        }
+    }
+
+    drawSlopes();
+}
+
+// --- Check Collision (with dynamic height) ---
+function checkCollision() {
+    const arrowHalfSize = arrow.size / 2;
+    if (arrow.y - arrowHalfSize < 0 || arrow.y + arrowHalfSize > canvas.height) {
+        gameOver = true;
+        addScoreToLeaderboard(Math.floor(score), difficultyLevels[currentDifficultyIndex].name);
+        triggerCollisionFeedback();
+        return;
+    }
+
+    if (slopePoints.length < 2) return;
+
+    let p1 = null, p2 = null;
+    for (let i = 0; i < slopePoints.length - 1; i++) {
+        if (slopePoints[i].x <= arrow.x && slopePoints[i+1].x > arrow.x) {
+            p1 = slopePoints[i];
+            p2 = slopePoints[i+1];
+            break;
+        }
+    }
+
+    if (!p1) return;
+
+    const t = (arrow.x - p1.x) / (p2.x - p1.x);
+
+    // Interpolate center line Y and height for the arrow's current X position
+    const interpolatedCenterY = p1.centerLineY + t * (p2.centerLineY - p1.centerLineY);
+    const interpolatedHeight = p1.height + t * (p2.height - p1.height);
+
+    const ceilingY = interpolatedCenterY - interpolatedHeight / 2;
+    const floorY = interpolatedCenterY + interpolatedHeight / 2;
+
+    const arrowRadius = arrow.size / 3;
+    if (arrow.y - arrowRadius < ceilingY || arrow.y + arrowRadius > floorY) {
+        gameOver = true;
+        addScoreToLeaderboard(Math.floor(score), difficultyLevels[currentDifficultyIndex].name);
+        triggerCollisionFeedback();
+    }
+}
+
+// --- Leaderboard functions ---
+function loadLeaderboard() {
+    const storedLeaderboard = localStorage.getItem('arrowGameLeaderboard');
+    if (storedLeaderboard) {
+        leaderboard = JSON.parse(storedLeaderboard);
+    }
+}
+
+function saveLeaderboard() {
+    localStorage.setItem('arrowGameLeaderboard', JSON.stringify(leaderboard));
+}
+
+function addScoreToLeaderboard(newScore, difficultyName) {
+    leaderboard.push({ score: newScore, difficulty: difficultyName });
+    leaderboard.sort((a, b) => b.score - a.score);
+    leaderboard = leaderboard.slice(0, MAX_LEADERBOARD_ENTRIES);
+    saveLeaderboard();
+}
+
+function drawLeaderboard(yOffset = 0) {
+    ctx.fillStyle = '#FFF';
+    ctx.font = '20px "Press Start 2P", Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Leaderboard', canvas.width / 2, canvas.height / 2 + yOffset + 100);
+
+    ctx.font = '16px "Press Start 2P", Arial';
+    if (leaderboard.length === 0) {
+        ctx.fillText('No scores yet!', canvas.width / 2, canvas.height / 2 + yOffset + 130);
+    } else {
+        leaderboard.forEach((entry, index) => {
+            ctx.fillText(`${index + 1}. ${entry.score} (${entry.difficulty})`, canvas.width / 2, canvas.height / 2 + yOffset + 130 + (index * 25));
+        });
+    }
+}
+
+// --- Draw Start/Game Over Screens ---
+function drawStartScreen() {
+    ctx.fillStyle = '#FFF';
+    ctx.font = '48px "Press Start 2P", Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Wave Trainer', canvas.width / 2, canvas.height / 2 - 150);
+
+    ctx.font = '24px "Press Start 2P", Arial';
+    ctx.fillText('Press H to Start', canvas.width / 2, canvas.height / 2 - 50);
+
+    ctx.font = '18px "Press Start 2P", Arial';
+    ctx.fillText('Press D to Change Difficulty', canvas.width / 2, canvas.height / 2);
+
+    const currentDifficulty = difficultyLevels[currentDifficultyIndex];
+    ctx.fillText(`Difficulty: ${currentDifficulty.name}`, canvas.width / 2, canvas.height / 2 + 40);
+
+    drawLeaderboard(50);
+}
+
+function drawGameOverScreen() {
+    ctx.fillStyle = '#FFF';
+    ctx.font = '48px "Press Start 2P", Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('Game Over!', canvas.width / 2, canvas.height / 2 - 150);
+
+    ctx.font = '28px "Press Start 2P", Arial';
+    ctx.fillText(`Your Score: ${Math.floor(score)}`, canvas.width / 2, canvas.height / 2 - 90);
+
+    const currentDifficulty = difficultyLevels[currentDifficultyIndex];
+    ctx.font = '18px "Press Start 2P", Arial';
+    ctx.fillText(`Difficulty: ${currentDifficulty.name}`, canvas.width / 2, canvas.height / 2 - 40);
+
+    ctx.font = '24px "Press Start 2P", Arial';
+    ctx.fillText('Press H to Restart', canvas.width / 2, canvas.height / 2 + 20);
+    ctx.fillText('Press D to Change Difficulty', canvas.width / 2, canvas.height / 2 + 60);
+
+    drawLeaderboard(50);
+}
+
+// --- Parallax Background Drawing ---
+function drawBackground() {
+    for (const layer of backgroundLayers) {
+        // Move layer
+        if (!gameOver) {
+            layer.x -= currentScrollSpeed * layer.speedFactor;
+        }
+
+        // Tile layer if it goes off screen
+        const imgWidth = layer.image.width;
+        if (layer.x <= -imgWidth) {
+            layer.x += imgWidth;
+        }
+        // Draw image twice to cover the screen
+        ctx.drawImage(layer.image, layer.x, 0, imgWidth, canvas.height);
+        ctx.drawImage(layer.image, layer.x + imgWidth, 0, imgWidth, canvas.height);
+    }
+}
+
+// --- Speed Lines Effect ---
+function drawSpeedLines() {
+    if (gameOver) return;
+
+    const speedFactor = (currentScrollSpeed - difficultyLevels[currentDifficultyIndex].baseSpeed) / 10; // Normalize speed
+    if (speedFactor <= 0) return;
+
+    const numLines = Math.min(50, Math.floor(speedFactor * 20)); // More lines at higher speed
+    const maxLineLength = Math.min(50, Math.floor(speedFactor * 30)); // Longer lines at higher speed
+    const lineOpacity = Math.min(0.8, speedFactor * 0.5);
+
+    ctx.strokeStyle = `rgba(255, 255, 255, ${lineOpacity})`;
+    ctx.lineWidth = 2;
+
+    for (let i = 0; i < numLines; i++) {
+        const angle = Math.random() * Math.PI * 2; // Random angle
+        const startX = arrow.x + Math.cos(angle) * (arrow.size / 2 + Math.random() * 50);
+        const startY = arrow.y + Math.sin(angle) * (arrow.size / 2 + Math.random() * 50);
+
+        const endX = startX + Math.cos(angle) * maxLineLength;
+        const endY = startY + Math.sin(angle) * maxLineLength;
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+    }
+}
+
+
+// --- Collision Feedback ---
+function triggerCollisionFeedback() {
+    screenShake = { x: 0, y: 0, duration: 15, intensity: 5 }; // Shake for 15 frames, intensity 5px
+    flashEffect = { alpha: 1, duration: 5 }; // Flash for 5 frames
+}
+
+function updateCollisionFeedback() {
+    if (screenShake.duration > 0) {
+        screenShake.x = (Math.random() - 0.5) * 2 * screenShake.intensity;
+        screenShake.y = (Math.random() - 0.5) * 2 * screenShake.intensity;
+        screenShake.duration--;
+    } else {
+        screenShake.x = 0;
+        screenShake.y = 0;
+    }
+
+    if (flashEffect.duration > 0) {
+        flashEffect.alpha = flashEffect.duration / 5; // Fade out
+        flashEffect.duration--;
+    } else {
+        flashEffect.alpha = 0;
+    }
+}
+
+function drawCollisionFeedback() {
+    if (flashEffect.alpha > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${flashEffect.alpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+}
+
+// --- Main Game Loop ---
+function update() {
+    // Apply screen shake offset at the beginning of drawing
+    ctx.save();
+    ctx.translate(screenShake.x, screenShake.y);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!gameStarted) {
+        drawStartScreen();
+    } else {
+        drawBackground(); // Draw parallax background first
+
+        if (!gameOver) {
+            // Arrow movement
+            if (upPressed) {
+                arrow.y -= currentScrollSpeed;
+            } else {
+                arrow.y += currentScrollSpeed;
+            }
+
+            // Arrow angle
+            arrow.angle = upPressed ? -Math.PI / 4 : Math.PI / 4;
+
+            // Score and speed acceleration (bursts)
+            score += currentScrollSpeed / 60; // Increment score continuously
+            const currentDifficulty = difficultyLevels[currentDifficultyIndex];
+            if (score >= nextSpeedMilestone) {
+                currentScrollSpeed += currentDifficulty.speedIncreaseAmount;
+                nextSpeedMilestone += currentDifficulty.speedIncreaseInterval; // Set next milestone
+            }
+
+            checkCollision();
+
+            // Trail update
+            trailPoints.push({ x: arrow.x, y: arrow.y });
+            for (const point of trailPoints) {
+                point.x -= currentScrollSpeed;
+            }
+            while (trailPoints.length > MAX_TRAIL_LENGTH || (trailPoints.length > 0 && trailPoints[0].x < -100)) {
+                trailPoints.shift();
+            }
+        }
+
+        // Drawing section (happens whether game is running or game over)
+        updateAndDrawSlopes();
+        drawTrail();
+        drawArrow(arrow.x, arrow.y, arrow.angle);
+        drawSpeedLines(); // Draw speed lines over everything else
+
+        if (gameOver) {
+            drawGameOverScreen();
+        } else {
+            // UI Polish: Display current score and speed with a background
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'; // Semi-transparent black background
+            ctx.fillRect(10, 10, 200, 60); // Background for score
+            ctx.fillRect(canvas.width - 210, 10, 200, 60); // Background for speed
+
+            ctx.fillStyle = '#FFF';
+            ctx.font = '24px "Press Start 2P", Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`Score: ${Math.floor(score)}`, 20, 40);
+            ctx.textAlign = 'right';
+            ctx.fillText(`Speed: ${currentScrollSpeed.toFixed(1)}`, canvas.width - 20, 40);
+        }
+        updateCollisionFeedback(); // Update shake/flash state
+        drawCollisionFeedback(); // Draw flash effect
+    }
+
+    ctx.restore(); // Restore canvas state after screen shake
+    requestAnimationFrame(update);
+}
+
+// Load leaderboard when the script starts
+loadLeaderboard();
+// Start the game loop. It will initially draw the start screen.
+update();
+</script>
+</body>
+</html>
