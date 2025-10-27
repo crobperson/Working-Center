@@ -44,11 +44,11 @@ const difficultyLevels = [
     // baseSpeed: initial scroll speed
     // speedIncreaseInterval: score points after which speed increases
     // speedIncreaseAmount: how much speed increases at each interval
-    { name: "Easy", baseTunnelHeight: 160, minTunnelHeight: 160, maxTunnelHeight: 180, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.225 },
-    { name: "Medium", baseTunnelHeight: 120, minTunnelHeight: 120, maxTunnelHeight: 140, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.315 },
-    { name: "Hard", baseTunnelHeight: 100, minTunnelHeight: 80, maxTunnelHeight: 100, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.405 },
-    { name: "Hard+", baseTunnelHeight: 80, minTunnelHeight: 60, maxTunnelHeight: 80, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.495 },
-    { name: "Diddy", baseTunnelHeight: 60, minTunnelHeight: 40, maxTunnelHeight: 60, baseSpeed: 6, speedIncreaseInterval: 25, speedIncreaseAmount: 0.585 }
+    { name: "Easy", baseTunnelHeight: 160, minTunnelHeight: 160, maxTunnelHeight: 180, baseSpeed: 6, speedIncreaseInterval: 5, speedIncreaseAmount: 0.225 },
+    { name: "Medium", baseTunnelHeight: 120, minTunnelHeight: 120, maxTunnelHeight: 140, baseSpeed: 6, speedIncreaseInterval: 5, speedIncreaseAmount: 0.315 },
+    { name: "Hard", baseTunnelHeight: 100, minTunnelHeight: 80, maxTunnelHeight: 100, baseSpeed: 6, speedIncreaseInterval: 5, speedIncreaseAmount: 0.405 },
+    { name: "Hard+", baseTunnelHeight: 80, minTunnelHeight: 60, maxTunnelHeight: 80, baseSpeed: 6, speedIncreaseInterval: 5, speedIncreaseAmount: 0.495 },
+    { name: "Diddy", baseTunnelHeight: 60, minTunnelHeight: 40, maxTunnelHeight: 60, baseSpeed: 6, speedIncreaseInterval: 5, speedIncreaseAmount: 0.585 }
 ];
 let currentDifficultyIndex = 0;
 
@@ -56,7 +56,7 @@ let currentDifficultyIndex = 0;
 let currentTunnelHeight; // The actual height of the tunnel at the arrow's X position
 let targetTunnelHeight;  // The height the tunnel is currently aiming for
 let tunnelHeightChangeCounter = 0; // Counter to trigger targetTunnelHeight changes
-const TUNNEL_HEIGHT_CHANGE_INTERVAL = 10; // Change target height every N segments
+const TUNNEL_HEIGHT_CHANGE_INTERVAL = 5; // Change target height every N segments
 
 let lastSlopeDirection = 1; // Reset for new game
 
